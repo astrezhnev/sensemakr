@@ -22,6 +22,7 @@ sensemakr(...)
   r2yz.dx = r2dz.x,
   bound_label = "Manual Bound",
   reduce = TRUE,
+  cluster = NULL,
   ...
 )
 
@@ -37,6 +38,7 @@ sensemakr(...)
   r2yz.dx = r2dz.x,
   bound_label = "Manual Bound",
   reduce = TRUE,
+  cluster = NULL,
   ...
 )
 
@@ -55,6 +57,7 @@ sensemakr(...)
   r2yz.dx = r2dz.x,
   bound_label = "",
   reduce = TRUE,
+  cluster = NULL,
   ...
 )
 
@@ -108,6 +111,15 @@ with outcome Y, given covariates X and treatment D.}
 
 \item{reduce}{should the bias adjustment reduce or increase the
 absolute value of the estimated coefficient? Default is \code{TRUE}.}
+
+\item{cluster}{optional character string naming a column (in the model frame or
+the model's data) that identifies the cluster in which treatment is assigned, for
+the clustered-treatment-assignment setting. The variable should be a character or
+factor. When supplied, treatment must be constant within each cluster, and the
+reported robustness value and extreme robustness value are corrected by Pearson's
+partial correlation ratio \eqn{\eta^2_{Y \mid D, X}} so that they match the
+cluster-aggregated regression (see Strezhnev 2026). Default is \code{NULL}
+(standard, unadjusted sensitivity analysis).}
 
 \item{formula}{an object of the class \code{\link{formula}}: a symbolic description of the model to be fitted.}
 

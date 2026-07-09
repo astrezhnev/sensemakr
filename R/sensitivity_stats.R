@@ -702,6 +702,14 @@ sensitivity_stats <- function(...){
 
 #' @inheritParams adjusted_estimate
 #' @inheritParams robustness_value
+#' @param eta2 optional numeric scalar, Pearson's partial correlation ratio
+#' \eqn{\eta^2_{Y \mid D, X}} of the outcome given treatment and covariates: the share
+#' of the residual variance of the outcome that lies between clusters. When supplied,
+#' the returned \code{data.frame} gains the columns \code{eta2}, \code{rv_q_cluster}
+#' and \code{xrv_q_cluster}, the cluster-adjusted robustness value and extreme
+#' robustness value, obtained by dividing the outcome-treatment partial f by
+#' \eqn{\eta}. Normally set indirectly via the \code{cluster} argument of
+#' \code{\link{sensemakr}}. Default is \code{NULL} (no adjustment).
 #' @rdname sensitivity_stats
 #' @export
 sensitivity_stats.lm <- function(model,
@@ -710,6 +718,7 @@ sensitivity_stats.lm <- function(model,
                                  alpha = 0.05,
                                  reduce = TRUE,
                                  invert = FALSE,
+                                 eta2 = NULL,
                                  ...)
 {
 
@@ -722,6 +731,7 @@ sensitivity_stats.lm <- function(model,
                                                           alpha = alpha,
                                                           reduce = reduce,
                                                           invert = invert,
+                                                          eta2 = eta2,
                                                           ...))
   sensitivity_stats
 }
@@ -737,6 +747,7 @@ sensitivity_stats.fixest <- function(model,
                                  alpha = 0.05,
                                  reduce = TRUE,
                                  invert = FALSE,
+                                 eta2 = NULL,
                                  message = T,
                                  ...)
 {
@@ -751,6 +762,7 @@ sensitivity_stats.fixest <- function(model,
                                                           alpha = alpha,
                                                           reduce = reduce,
                                                           invert = invert,
+                                                          eta2 = eta2,
                                                           ...))
   sensitivity_stats
 }
@@ -766,6 +778,7 @@ sensitivity_stats.numeric <- function(estimate,
                                       alpha = 0.05,
                                       reduce = TRUE,
                                       invert = FALSE,
+                                      eta2 = NULL,
                                       ...)
 {
   check_se(se)
@@ -782,6 +795,23 @@ sensitivity_stats.numeric <- function(estimate,
   sensitivity_stats[["rv_qa"]] <- (robustness_value(t_statistic = original_t, dof = dof, q = q, alpha = alpha, invert = invert))
   sensitivity_stats[["f2yd.x"]] <- as.numeric(partial_f2(t_statistic = original_t, dof = dof))
   sensitivity_stats[["dof"]] <- dof
+
+  # cluster-adjusted statistics (clustered treatment assignment).
+  # Dividing the outcome-treatment partial f by eta = sqrt(eta2) recovers the
+  # cluster-level partial f (Strezhnev 2026, eq. unit-to-cluster f); since the
+  # robustness value and extreme robustness value depend on the effect side
+  # only through this partial f, we simply pass the inflated t = t/eta to the
+  # standard functions. Only the point-estimate (alpha = 1) quantities are
+  # adjusted: the correction does not extend to the significance-adjusted
+  # robustness value, whose critical value depends on the residual dof.
+  if (!is.null(eta2)) {
+    check_r(eta2)
+    eta <- sqrt(eta2)
+    t_cluster <- original_t / eta
+    sensitivity_stats[["eta2"]] <- eta2
+    sensitivity_stats[["rv_q_cluster"]] <- (robustness_value(t_statistic = t_cluster, dof = dof, q = q, alpha = 1, invert = invert))
+    sensitivity_stats[["xrv_q_cluster"]] <- (extreme_robustness_value(t_statistic = t_cluster, dof = dof, q = q, alpha = 1, invert = invert))
+  }
   sensitivity_stats
 }
 

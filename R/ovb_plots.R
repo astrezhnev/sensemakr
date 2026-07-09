@@ -45,9 +45,16 @@ plot.sensemakr = function(x,
 }
 
 
+#' @param show_cluster_line when \code{x} carries cluster-adjusted statistics
+#' (i.e. \code{sensemakr} was called with a \code{cluster} argument), draw the
+#' cluster equi-confounding line \eqn{r_y = \eta^2 r_d} through the origin and
+#' mark the cluster-adjusted robustness value on it. Default \code{TRUE}.
+#' @param col_cluster colour for the equi-confounding line and point.
 #' @export
 ovb_contour_plot.sensemakr <- function(x,
-                                       sensitivity.of = c("estimate", "t-value", "lwr", "upr"), ...){
+                                       sensitivity.of = c("estimate", "t-value", "lwr", "upr"),
+                                       show_cluster_line = TRUE,
+                                       col_cluster = "blue", ...){
 
   sensitivity.of <- match.arg(sensitivity.of)
 
@@ -70,20 +77,51 @@ ovb_contour_plot.sensemakr <- function(x,
   t.thr <- abs(qt(alpha/2, df = dof - 1))*sign(x$sensitivity_stats$t_statistic)
   plot.env$treatment <- x$info$treatment
 
-  with(x,
-       ovb_contour_plot(estimate = sensitivity_stats$estimate,
-                        se = sensitivity_stats$se,
-                        dof = sensitivity_stats$dof,
-                        r2dz.x = r2dz.x,
-                        r2yz.dx = r2yz.dx,
-                        bound_label = bound_label,
-                        sensitivity.of = sensitivity.of,
-                        reduce = reduce,
-                        estimate.threshold = thr,
-                        t.threshold = t.thr,
-                        ...)
+  show_cluster <- !is.null(x$cluster) && isTRUE(show_cluster_line)
 
-  )
+  args <- list(estimate = x$sensitivity_stats$estimate,
+               se = x$sensitivity_stats$se,
+               dof = x$sensitivity_stats$dof,
+               r2dz.x = r2dz.x,
+               r2yz.dx = r2yz.dx,
+               bound_label = bound_label,
+               sensitivity.of = sensitivity.of,
+               reduce = reduce,
+               estimate.threshold = thr,
+               t.threshold = t.thr)
+  dots <- list(...)
+
+  # The cluster-adjusted robustness value can sit outside the default plotting
+  # window. Widen an axis only when the point would otherwise fall off-canvas,
+  # and only when the user has not set the limits explicitly.
+  if (show_cluster && is.null(dots$lim) && is.null(dots$lim.x) && is.null(dots$lim.y)) {
+    eta2 <- x$cluster$eta2
+    rv_c <- as.numeric(x$sensitivity_stats$rv_q_cluster)
+    # the defaults ovb_contour_plot.numeric would otherwise pick
+    default.x <- min(max(c(0.4, r2dz.x * 1.2)), 1 - 1e-12)
+    default.y <- min(max(c(0.4, r2yz.dx * 1.2)), 1 - 1e-12)
+    if (rv_c > default.x) dots$lim.x <- min(rv_c * 1.2, 1 - 1e-12)
+    if (rv_c * eta2 > default.y) dots$lim.y <- min(rv_c * eta2 * 1.2, 1 - 1e-12)
+  }
+
+  out <- do.call(ovb_contour_plot, c(args, dots))
+
+  # Cluster equi-confounding locus. A confounder equally associated with
+  # treatment and the cluster-level outcome sits at r2yz.dx = eta2 * r2dz.x on
+  # the unit-level axes, since the unit-level outcome partial R2 is the
+  # cluster-level one scaled by eta2. The cluster-adjusted robustness value is
+  # where that line crosses the zero-effect contour.
+  if (show_cluster) {
+    eta2 <- x$cluster$eta2
+    rv_c <- as.numeric(x$sensitivity_stats$rv_q_cluster)
+    abline(a = 0, b = eta2, col = col_cluster, lty = 3, lwd = 2)
+    points(rv_c, rv_c * eta2, pch = 19, col = col_cluster, cex = 1)
+    text(rv_c, rv_c * eta2,
+         labels = paste0("RV = ", round(rv_c, 3)),
+         pos = 4, cex = 0.7, col = col_cluster)
+  }
+
+  invisible(out)
 }
 
 

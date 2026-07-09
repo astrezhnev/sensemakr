@@ -16,6 +16,7 @@ sensitivity_stats(...)
   alpha = 0.05,
   reduce = TRUE,
   invert = FALSE,
+  eta2 = NULL,
   ...
 )
 
@@ -26,6 +27,7 @@ sensitivity_stats(...)
   alpha = 0.05,
   reduce = TRUE,
   invert = FALSE,
+  eta2 = NULL,
   message = T,
   ...
 )
@@ -39,6 +41,7 @@ sensitivity_stats(...)
   alpha = 0.05,
   reduce = TRUE,
   invert = FALSE,
+  eta2 = NULL,
   ...
 )
 }
@@ -59,6 +62,15 @@ which means a reduction of 100\% of the current effect estimate (bring estimate 
 absolute value of the estimated coefficient? Default is \code{TRUE}.}
 
 \item{invert}{should IRV be computed instead of RV? (i.e. is the estimate insignificant?). Default is \code{FALSE}.}
+
+\item{eta2}{optional numeric scalar, Pearson's partial correlation ratio
+\eqn{\eta^2_{Y \mid D, X}} of the outcome given treatment and covariates: the share
+of the residual variance of the outcome that lies between clusters. When supplied,
+the returned \code{data.frame} gains the columns \code{eta2}, \code{rv_q_cluster}
+and \code{xrv_q_cluster}, the cluster-adjusted robustness value and extreme
+robustness value, obtained by dividing the outcome-treatment partial f by
+\eqn{\eta}. Normally set indirectly via the \code{cluster} argument of
+\code{\link{sensemakr}}. Default is \code{NULL} (no adjustment).}
 
 \item{message}{should messages be printed? Default = TRUE.}
 

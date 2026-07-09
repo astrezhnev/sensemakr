@@ -175,6 +175,14 @@ sensemakr <- function(...){
 #' @param ky numeric vector. Parameterizes how many times stronger the confounder is related to the outcome in comparison to the observed benchmark covariate.
 #' Default value is the same as \code{kd}.
 #' @param bound_label label to bounds provided manually in \code{r2dz.x} and \code{r2yz.dx}.
+#' @param cluster optional character string naming a column (in the model frame or
+#' the model's data) that identifies the cluster in which treatment is assigned, for
+#' the clustered-treatment-assignment setting. The variable should be a character or
+#' factor. When supplied, treatment must be constant within each cluster, and the
+#' reported robustness value and extreme robustness value are corrected by Pearson's
+#' partial correlation ratio \eqn{\eta^2_{Y \mid D, X}} so that they match the
+#' cluster-aggregated regression (see Strezhnev 2026). Default is \code{NULL}
+#' (standard, unadjusted sensitivity analysis).
 #' @inheritParams robustness_value
 #' @rdname sensemakr
 #' @importFrom stats formula
@@ -189,22 +197,32 @@ sensemakr.lm <- function(model,
                          r2yz.dx = r2dz.x,
                          bound_label = "Manual Bound",
                          reduce = TRUE,
+                         cluster = NULL,
                          ...){
   out <- list()
   out$info <- list(formula = formula(model),
                    treatment = treatment,
                    q = q,
                    alpha = alpha,
-                   reduce = reduce)
+                   reduce = reduce,
+                   cluster = cluster)
 
-
+  # cluster-adjusted correction factor (clustered treatment assignment)
+  eta2 <- NULL
+  if (!is.null(cluster)) {
+    cluster_vec <- .get_cluster(model, cluster)
+    .check_cluster_treatment(model, treatment, cluster_vec)
+    eta2 <- .compute_eta2(model, cluster_vec)
+    out$cluster <- list(eta2 = eta2)
+  }
 
   # senstivity statistics
   out$sensitivity_stats <- sensitivity_stats.lm(model = model,
                                                 treatment = treatment,
                                                 q = q,
                                                 alpha = alpha,
-                                                reduce = reduce)
+                                                reduce = reduce,
+                                                eta2 = eta2)
   estimate <- out$sensitivity_stats$estimate
 
   h0 <- ifelse(reduce, estimate*(1 - q), estimate*(1 + q))
@@ -286,6 +304,7 @@ sensemakr.fixest <- function(model,
                              r2yz.dx = r2dz.x,
                              bound_label = "Manual Bound",
                              reduce = TRUE,
+                             cluster = NULL,
                              ...){
 
   if(model$method != "feols") {
@@ -299,9 +318,17 @@ sensemakr.fixest <- function(model,
                    treatment = treatment,
                    q = q,
                    alpha = alpha,
-                   reduce = reduce)
+                   reduce = reduce,
+                   cluster = cluster)
 
-
+  # cluster-adjusted correction factor (clustered treatment assignment)
+  eta2 <- NULL
+  if (!is.null(cluster)) {
+    cluster_vec <- .get_cluster(model, cluster)
+    .check_cluster_treatment(model, treatment, cluster_vec)
+    eta2 <- .compute_eta2(model, cluster_vec)
+    out$cluster <- list(eta2 = eta2)
+  }
 
   # senstivity statistics
   out$sensitivity_stats <- sensitivity_stats.fixest(model = model,
@@ -309,6 +336,7 @@ sensemakr.fixest <- function(model,
                                                     q = q,
                                                     alpha = alpha,
                                                     reduce = reduce,
+                                                    eta2 = eta2,
                                                     message = F)
   estimate <- out$sensitivity_stats$estimate
 
@@ -390,6 +418,7 @@ sensemakr.formula <- function(formula,
                               r2yz.dx = r2dz.x,
                               bound_label = "",
                               reduce = TRUE,
+                              cluster = NULL,
                               ...){
   check_formula(treatment = treatment,
                 formula = formula,
@@ -421,6 +450,7 @@ sensemakr.formula <- function(formula,
             r2yz.dx = r2yz.dx,
             bound_label = bound_label,
             reduce = reduce,
+            cluster = cluster,
             ...)
 }
 
