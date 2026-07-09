@@ -160,6 +160,38 @@ test_that("contour plot widens its limits only when the cluster RV falls off-can
 })
 
 
+test_that("print and summary report the cluster block only when clustering is enabled", {
+  dat   <- make_cluster_data()
+  model <- lm(Y ~ D + X, data = dat)
+
+  clustered <- sensemakr(model, treatment = "D", cluster = "cl")
+  standard  <- sensemakr(model, treatment = "D")
+
+  clustered_print   <- paste(capture.output(print(clustered)), collapse = "\n")
+  clustered_summary <- paste(capture.output(summary(clustered)), collapse = "\n")
+  standard_print    <- paste(capture.output(print(standard)), collapse = "\n")
+  standard_summary  <- paste(capture.output(summary(standard)), collapse = "\n")
+
+  # the cluster block appears, names the cluster variable, and reports eta2,
+  # the cluster-adjusted RV and the cluster-adjusted extreme RV
+  expect_true(grepl("Cluster-Adjusted Statistics (cluster: cl)", clustered_print, fixed = TRUE))
+  expect_true(grepl("Partial eta2 of outcome with cluster", clustered_print, fixed = TRUE))
+  expect_true(grepl("Extreme Robustness Value", clustered_print, fixed = TRUE))
+  expect_true(grepl(as.character(round(clustered$sensitivity_stats$eta2, 5)),
+                    clustered_print, fixed = TRUE))
+
+  # summary additionally carries the verbal interpretation
+  expect_true(grepl("Verbal interpretation of cluster-adjusted sensitivity statistics",
+                    clustered_summary, fixed = TRUE))
+  expect_true(grepl("between clusters, not within them", clustered_summary, fixed = TRUE))
+
+  # without a cluster argument, nothing cluster-related is printed
+  expect_false(grepl("Cluster", standard_print, fixed = TRUE))
+  expect_false(grepl("Cluster", standard_summary, fixed = TRUE))
+  expect_false(grepl("eta2", standard_summary, fixed = TRUE))
+})
+
+
 test_that("cluster adjustment agrees between lm and fixest", {
   skip_if_not_installed("fixest")
   dat <- make_cluster_data()

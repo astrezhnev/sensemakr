@@ -63,6 +63,15 @@ print.sensemakr = function(x,
   cat(" Robustness Value,", "q =", q <- x$info$q, ":", rv_q <- round(x$sensitivity_stats$rv_q,digits), "\n ")
   cat(" Robustness Value,", "q =", q, "alpha =", alpha <- x$info$alpha, ":", rv_qa <- round(x$sensitivity_stats$rv_qa,digits), "\n")
   cat("\n")
+
+  if (!is.null(x$cluster)) {
+    cat("Cluster-Adjusted Statistics (cluster: ", x$info$cluster, "):\n ", sep = "")
+    cat(" Partial eta2 of outcome with cluster:", round(x$sensitivity_stats$eta2, digits), "\n ")
+    cat(" Robustness Value,", "q =", q, ":", round(x$sensitivity_stats$rv_q_cluster, digits), "\n ")
+    cat(" Extreme Robustness Value,", "q =", q, ":", round(x$sensitivity_stats$xrv_q_cluster, digits), "\n")
+    cat("\n")
+  }
+
   cat("For more information, check summary.")
 
 
@@ -106,6 +115,18 @@ summary.sensemakr <- function(object, digits = max(3L, getOption("digits") - 3L)
   cat(" Robustness Value,", "q =", paste0(q, ":"), rv_q <- round(x$sensitivity_stats$rv_q,digits), "\n ")
   cat(" Robustness Value,", "q =", paste0(q, ","), "alpha =", paste0(alpha, ":"), rv_qa <- round(x$sensitivity_stats$rv_qa,digits), "\n")
   cat("\n")
+
+  if (!is.null(x$cluster)) {
+    eta2   <- round(x$sensitivity_stats$eta2, digits)
+    rv_qc  <- round(x$sensitivity_stats$rv_q_cluster, digits)
+    xrv_qc <- round(x$sensitivity_stats$xrv_q_cluster, digits)
+    cat("Cluster-Adjusted Statistics (cluster: ", x$info$cluster, "):\n ", sep = "")
+    cat(" Partial eta2 of outcome with cluster:", eta2, "\n ")
+    cat(" Robustness Value,", "q =", paste0(q, ":"), rv_qc, "\n ")
+    cat(" Extreme Robustness Value,", "q =", paste0(q, ":"), xrv_qc, "\n")
+    cat("\n")
+  }
+
   reduce <- ifelse(x$info$reduce, "reduce", "increase")
 
   cat("Verbal interpretation of sensitivity statistics:\n\n")
@@ -128,6 +149,27 @@ summary.sensemakr <- function(object, digits = max(3L, getOption("digits") - 3L)
       paste0(h0,","),
       "at the significance level of alpha =", paste0(alpha,"."))
   cat("\n\n")
+
+  if (!is.null(x$cluster)) {
+    cat("Verbal interpretation of cluster-adjusted sensitivity statistics:\n\n")
+    cat("-- Treatment is assigned at the level of", paste0("'", x$info$cluster, "',"),
+        "so an unobserved confounder must also be a cluster-level variable, and can only explain variation in the outcome that lies between clusters, not within them.",
+        "The partial eta2 of the outcome with the cluster is", paste0(100*eta2, "%,"),
+        "meaning that only", paste0(100*eta2, "%"), "of the residual variance of the outcome is available for such a confounder to explain.",
+        "The unadjusted statistics above compare the treatment and outcome partial R2 on different scales, and are therefore too conservative.")
+    cat("\n\n")
+    cat("-- Cluster-adjusted Robustness Value,", "q =", paste0(q, ":"),
+        "cluster-level unobserved confounders that explain more than", paste0(100*rv_qc, "%"),
+        "of the residual variance of the treatment and of the between-cluster residual variance of the outcome are strong enough to bring the point estimate to", paste0(h0, "."),
+        "This equals the robustness value one would obtain by fitting the regression on cluster averages, weighted by cluster size.")
+    cat("\n\n")
+    cat("-- Cluster-adjusted Extreme Robustness Value,", "q =", paste0(q, ":"),
+        "an extreme cluster-level confounder that explains 100% of the between-cluster residual variance of the outcome",
+        "would need to explain at least", paste0(100*xrv_qc, "%"),
+        "of the residual variance of the treatment to bring the point estimate to", paste0(h0, "."),
+        "Explaining 100% of the between-cluster variance is the most such a confounder can do, since the within-cluster variance cannot be explained by a cluster-level constant.")
+    cat("\n\n")
+  }
 
   bounds <- x$bounds
   if (!is.null(bounds)) {
