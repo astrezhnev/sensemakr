@@ -77,6 +77,16 @@ print.sensemakr = function(x,
 
 }
 
+# Internal: the cluster line of the minimal-reporting footnote, for the HTML
+# tables. Returns "" when the object carries no cluster statistics.
+cluster_note_html <- function(x, digits, mathjax = TRUE) {
+  if (is.null(x$cluster)) return("")
+  eta2 <- if (mathjax) "$\\eta^2_{Y \\sim {\\bf X}, D}$" else "&eta;<sup>2</sup><sub>Y~X,D</sub>"
+  paste0("Cluster ( ", x$cluster$cluster, " ): ",
+         x$cluster$n_clusters, " clusters, ",
+         eta2, " = ", 100 * round(x$cluster$eta2, digits), "\\%; ")
+}
+
 .simpleCap <- function(x) {
   s <- strsplit(x, " ")[[1]]
   paste(toupper(substring(s, 1, 1)), substring(s, 2),
@@ -250,23 +260,56 @@ latex_table <- function(x, digits = 3, verbose = TRUE, ...){
     100 * round(x$sensitivity_stats$rv_q, digits), "\\% & ",
     100 * round(x$sensitivity_stats$rv_qa, digits), "\\% \\\\ \n")
 
-  # Foonote row: Display benchmarks
+  # Cluster-adjusted row. The extreme robustness value takes the partial R2
+  # column and the robustness value its own; there is deliberately no
+  # cluster analogue of the significance-adjusted robustness value.
+  cluster_results = ""
+  if (!is.null(x$cluster)) {
+    cluster_results = paste0(
+      "\\textit{Cluster-adjusted} & & & & ",
+      100 * round(x$sensitivity_stats$xrv_q_cluster, digits), "\\% & ",
+      100 * round(x$sensitivity_stats$rv_q_cluster, digits), "\\% & --- \\\\ \n")
+  }
+
+  # Foonote rows: cluster information, then benchmarks
+
+  notes = character(0)
+
+  if (!is.null(x$cluster)) {
+    notes = c(notes,
+              paste0("\\small ",
+                     "\\textit{Cluster (", x$cluster$cluster, ")}: ",
+                     x$cluster$n_clusters, " clusters, ",
+                     "$\\eta^2_{Y \\sim {\\bf X}, D}$ = ",
+                     100 * round(x$cluster$eta2, digits),
+                     "\\%"))
+  }
 
   if (!is.null(x$bounds)) {
+    row = x$bounds[1, , drop = FALSE]
+
+    bound_note = paste0("\\small ",
+                        "\\textit{Bound (", row$bound_label, ")}: ",
+                        "$R^2_{Y\\sim Z| {\\bf X}, D}$ = ",
+                        100 * round(row$r2yz.dx, digits),
+                        "\\%, $R^2_{D\\sim Z| {\\bf X} }$ = ",
+                        100 * round(row$r2dz.x, digits),
+                        "\\%")
+    if (!is.null(row$r2yz.dx_cluster)) {
+      bound_note = paste0(bound_note,
+                          ", cluster-level $R^2_{Y\\sim Z| {\\bf X}, D}$ = ",
+                          100 * round(row$r2yz.dx_cluster, digits),
+                          "\\%")
+    }
+    notes = c(notes, bound_note)
+  }
+
+  if (length(notes) > 0) {
     footnote_begin = paste0("\\hline \n",
                             "df = ", x$sensitivity_stats$dof, " & & ",
                             "\\multicolumn{5}{r}{ ",
                             "")
-    row = x$bounds[1, , drop = FALSE]
-
-    footnotes = paste0("\\small ",
-                       "\\textit{Bound (", row$bound_label, ")}: ",
-                       "$R^2_{Y\\sim Z| {\\bf X}, D}$ = ",
-                       100 * round(row$r2yz.dx, digits),
-                       "\\%, $R^2_{D\\sim Z| {\\bf X} }$ = ",
-                       100 * round(row$r2dz.x, digits),
-                       "\\%")
-    footnote_body = paste0(footnotes, collapse = " \\\\ ")
+    footnote_body = paste0(notes, collapse = " \\\\ ")
     footnote_end = "} \\\\\n"
 
     footnote = paste0(footnote_begin, footnote_body, footnote_end)
@@ -290,7 +333,7 @@ latex_table <- function(x, digits = 3, verbose = TRUE, ...){
 
   # Stick it all together
   table = paste0(table_begin, outcome_header, coeff_header,
-                 coeff_results, footnote, tabular_end,
+                 coeff_results, cluster_results, footnote, tabular_end,
                  caption, label, table_end)
 
   # Cat to output valid LaTeX for rmarkdown
@@ -361,7 +404,26 @@ html_table <- function(x, digits = 3, verbose = TRUE, ...){
     100 * round(x$sensitivity_stats$rv_q, digits), "\\% </td>\n",
     '\t<td style="text-align:right;border-bottom: 1px solid black">',
     100 * round(x$sensitivity_stats$rv_qa, digits), "\\% </td>\n",
-    "</tr>\n</tbody>\n")
+    "</tr>\n")
+
+  # Cluster-adjusted row. The extreme robustness value takes the partial R2
+  # column and the robustness value its own; there is deliberately no cluster
+  # analogue of the significance-adjusted robustness value.
+  cluster_results = ""
+  if (!is.null(x$cluster)) {
+    cell = '\t<td style="text-align:right;border-bottom: 1px solid black">'
+    cluster_results = paste0(
+      " <tr>\n",
+      '\t<td style="text-align:left; border-bottom: 1px solid black"><i>',
+      "Cluster-adjusted", "</i></td>\n",
+      cell, " </td>\n", cell, " </td>\n", cell, " </td>\n",
+      cell, 100 * round(x$sensitivity_stats$xrv_q_cluster, digits), "\\% </td>\n",
+      cell, 100 * round(x$sensitivity_stats$rv_q_cluster, digits), "\\% </td>\n",
+      cell, "&mdash; </td>\n",
+      "</tr>\n")
+  }
+
+  tbody_end = "</tbody>\n"
 
   table_end <- "</table>"
 
@@ -371,6 +433,7 @@ html_table <- function(x, digits = 3, verbose = TRUE, ...){
     footnote = paste0('<tr>\n',
                       "<td colspan = 7 style='text-align:right;border-top: 1px solid black;border-bottom: 1px solid transparent;font-size:11px'>",
                       "Note: df = ", x$sensitivity_stats$dof, "; ",
+                      cluster_note_html(x, digits, mathjax = TRUE),
                       "Bound ( ", row$bound_label, " ):  ",
                       "$R^2_{Y\\sim Z| {\\bf X}, D}$ = ",
                       100 * round(row$r2yz.dx, digits),
@@ -383,6 +446,7 @@ html_table <- function(x, digits = 3, verbose = TRUE, ...){
     footnote = paste0('<tr>\n',
                       "<td colspan = 7 style='text-align:right;border-top: 1px solid black;border-bottom: 1px solid transparent;font-size:11px'>",
                       "Note: df = ", x$sensitivity_stats$dof, "; ",
+                      cluster_note_html(x, digits, mathjax = TRUE),
                       "</td>\n",
                       "</tr>\n")
   }
@@ -391,6 +455,8 @@ html_table <- function(x, digits = 3, verbose = TRUE, ...){
   table = paste0(table_begin,
                  coeff_header,
                  coeff_results,
+                 cluster_results,
+                 tbody_end,
                  footnote,
                  table_end)
 
@@ -464,7 +530,26 @@ html_table_no_mathjax <- function(x, digits = 3, verbose = TRUE, ...){
     100 * round(x$sensitivity_stats$rv_q, digits), "\\% </td>\n",
     '\t<td style="text-align:right;border-bottom: 1px solid black">',
     100 * round(x$sensitivity_stats$rv_qa, digits), "\\% </td>\n",
-    "</tr>\n</tbody>\n")
+    "</tr>\n")
+
+  # Cluster-adjusted row. The extreme robustness value takes the partial R2
+  # column and the robustness value its own; there is deliberately no cluster
+  # analogue of the significance-adjusted robustness value.
+  cluster_results = ""
+  if (!is.null(x$cluster)) {
+    cell = '\t<td style="text-align:right;border-bottom: 1px solid black">'
+    cluster_results = paste0(
+      " <tr>\n",
+      '\t<td style="text-align:left; border-bottom: 1px solid black"><i>',
+      "Cluster-adjusted", "</i></td>\n",
+      cell, " </td>\n", cell, " </td>\n", cell, " </td>\n",
+      cell, 100 * round(x$sensitivity_stats$xrv_q_cluster, digits), "\\% </td>\n",
+      cell, 100 * round(x$sensitivity_stats$rv_q_cluster, digits), "\\% </td>\n",
+      cell, "&mdash; </td>\n",
+      "</tr>\n")
+  }
+
+  tbody_end = "</tbody>\n"
 
   table_end <- "</table>"
 
@@ -474,6 +559,7 @@ html_table_no_mathjax <- function(x, digits = 3, verbose = TRUE, ...){
     footnote = paste0('<tr>\n',
                       "<td colspan = 7 style='text-align:right;border-bottom: 1px solid transparent;font-size:11px'>",
                       "Note: df = ", x$sensitivity_stats$dof, "; ",
+                      cluster_note_html(x, digits, mathjax = FALSE),
                       "Bound ( ", row$bound_label, " ):  ",
                       "R<sup>2</sup><sub>Y~Z|X,D</sub> = ",
                       100 * round(row$r2yz.dx, digits),
@@ -486,6 +572,7 @@ html_table_no_mathjax <- function(x, digits = 3, verbose = TRUE, ...){
     footnote = paste0('<tr>\n',
                       "<td colspan = 7 style='text-align:right;border-bottom: 1px solid transparent;font-size:11px'>",
                       "Note: df = ", x$sensitivity_stats$dof, "; ",
+                      cluster_note_html(x, digits, mathjax = FALSE),
                       "</td>\n",
                       "</tr>\n")
   }
@@ -494,6 +581,8 @@ html_table_no_mathjax <- function(x, digits = 3, verbose = TRUE, ...){
   table = paste0(table_begin,
                  coeff_header,
                  coeff_results,
+                 cluster_results,
+                 tbody_end,
                  footnote,
                  table_end)
 

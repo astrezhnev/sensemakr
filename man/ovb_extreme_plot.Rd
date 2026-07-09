@@ -72,8 +72,12 @@ ovb_extreme_plot(...)
   lim = min(c(r2dz.x + 0.1, 0.5)),
   legend = TRUE,
   legend.title = NULL,
+  legend.labels = NULL,
   cex.legend = 0.65,
   legend.bty = "n",
+  mark.x = NULL,
+  mark.label = NULL,
+  col.mark = "blue",
   xlab = NULL,
   ylab = NULL,
   cex.lab = 0.7,
@@ -132,6 +136,17 @@ absolute value of the estimated coefficient? Default is \code{TRUE}.}
 \item{dof}{residual degrees of freedom of the regression.}
 
 \item{legend.title}{the legend title. If \code{NULL}, then default legend is used.}
+
+\item{legend.labels}{character vector of labels for the \code{r2yz.dx} curves.
+If \code{NULL} (default), the labels are the \code{r2yz.dx} values as percentages,
+rounded to one decimal place.}
+
+\item{mark.x}{if not \code{NULL}, the x position at which to mark a point on the
+threshold line. Ignored unless it lies within the plotting limits.}
+
+\item{mark.label}{optional text label for the point drawn at \code{mark.x}.}
+
+\item{col.mark}{colour of the point drawn at \code{mark.x}.}
 
 \item{xlab}{label of x axis. If `NULL`, default label is used.}
 

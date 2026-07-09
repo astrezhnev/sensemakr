@@ -126,8 +126,21 @@ ovb_contour_plot.sensemakr <- function(x,
 
 
 
+#' @param scale_to_ceiling when \code{x} carries cluster-adjusted statistics
+#' (i.e. \code{sensemakr} was called with a \code{cluster} argument), interpret
+#' \code{r2yz.dx} as fractions of the feasible ceiling \eqn{\eta^2} rather than of 1,
+#' and scale the plotted scenarios accordingly. A cluster-level confounder cannot
+#' explain more than \eqn{\eta^2} of the residual variance of a unit-level outcome,
+#' so the unscaled scenarios are infeasible. The \code{100\%} curve then crosses the
+#' threshold at the cluster-adjusted extreme robustness value. Default \code{TRUE};
+#' set to \code{FALSE} to recover the unscaled behaviour. Ignored when \code{x}
+#' carries no cluster statistics.
+#' @param col_cluster colour used to mark the cluster-adjusted extreme robustness
+#' value on the threshold line.
 #' @export
-ovb_extreme_plot.sensemakr <- function(x, r2yz.dx = c(1, 0.75, 0.5), ...){
+ovb_extreme_plot.sensemakr <- function(x, r2yz.dx = c(1, 0.75, 0.5),
+                                       scale_to_ceiling = TRUE,
+                                       col_cluster = "blue", ...){
 
   if (is.null(x$bounds)) {
     r2dz.x <- NULL
@@ -140,17 +153,42 @@ ovb_extreme_plot.sensemakr <- function(x, r2yz.dx = c(1, 0.75, 0.5), ...){
   q <- x$info$q
   reduce <- x$info$reduce
   thr <- ifelse(reduce, estimate*(1 - q), estimate*(1 + q) )
-  with(x,
-       ovb_extreme_plot(estimate = sensitivity_stats$estimate,
-                        se = sensitivity_stats$se,
-                        dof = sensitivity_stats$dof,
-                        r2dz.x = r2dz.x,
-                        r2yz.dx = r2yz.dx,
-                        reduce = reduce,
-                        threshold = thr,
-                        ...)
 
-  )
+  # Rescale the outcome-side scenarios to the feasible ceiling for a
+  # cluster-level confounder, and label them as shares of that ceiling.
+  scale_cluster <- !is.null(x$cluster) && isTRUE(scale_to_ceiling)
+  dots <- list(...)
+  if (scale_cluster) {
+    eta2 <- x$cluster$eta2
+    if (is.null(dots$legend.labels)) {
+      dots$legend.labels <- paste0(round(r2yz.dx * 100, 1), "% of ceiling")
+    }
+    if (is.null(dots$legend.title)) {
+      dots$legend.title <- paste0("Partial R2 of confounder Z with the outcome, ",
+                                  "as a share of the between-cluster ceiling (eta2 = ",
+                                  round(eta2, 3), ")")
+    }
+    r2yz.dx <- r2yz.dx * eta2
+
+    # the 100%-of-ceiling curve crosses the threshold at the cluster-adjusted
+    # extreme robustness value; mark it, as the contour plot marks RV
+    if (is.null(dots$mark.x)) {
+      xrv_c <- as.numeric(x$sensitivity_stats$xrv_q_cluster)
+      dots$mark.x     <- xrv_c
+      dots$mark.label <- paste0("XRV = ", round(xrv_c, 3))
+      dots$col.mark   <- col_cluster
+    }
+  }
+
+  invisible(do.call(ovb_extreme_plot,
+          c(list(estimate = x$sensitivity_stats$estimate,
+                 se = x$sensitivity_stats$se,
+                 dof = x$sensitivity_stats$dof,
+                 r2dz.x = r2dz.x,
+                 r2yz.dx = r2yz.dx,
+                 reduce = reduce,
+                 threshold = thr),
+            dots)))
 }
 
 # contour plot ------------------------------------------------------------
@@ -1288,6 +1326,13 @@ ovb_extreme_plot.formula = function(formula,
 #' @rdname ovb_extreme_plot
 #' @param legend.bty legend box. See \code{bty} argument of \link{par}.
 #' @param legend.title the legend title. If \code{NULL}, then default legend is used.
+#' @param legend.labels character vector of labels for the \code{r2yz.dx} curves.
+#' If \code{NULL} (default), the labels are the \code{r2yz.dx} values as percentages,
+#' rounded to one decimal place.
+#' @param mark.x if not \code{NULL}, the x position at which to mark a point on the
+#' threshold line. Ignored unless it lies within the plotting limits.
+#' @param mark.label optional text label for the point drawn at \code{mark.x}.
+#' @param col.mark colour of the point drawn at \code{mark.x}.
 #' @param xlab label of x axis. If `NULL`, default label is used.
 #' @param ylab label of y axis. If `NULL`, default label is used.
 #' @export
@@ -1301,8 +1346,12 @@ ovb_extreme_plot.numeric = function(estimate,
                                     lim = min(c(r2dz.x + 0.1, 0.5)),
                                     legend = TRUE,
                                     legend.title  = NULL,
+                                    legend.labels = NULL,
                                     cex.legend = 0.65,
                                     legend.bty = "n",
+                                    mark.x = NULL,
+                                    mark.label = NULL,
+                                    col.mark = "blue",
                                     xlab = NULL,
                                     ylab = NULL,
                                     cex.lab = .7,
@@ -1384,6 +1433,17 @@ ovb_extreme_plot.numeric = function(estimate,
     out[["bounds"]] <- r2dz.x
   }
 
+  # Mark a point on the threshold line. Drawn here, while the main panel is
+  # still the active plot: the legend below opens a new `fig` region, after
+  # which the main plot's coordinate system is no longer current.
+  if (!is.null(mark.x) && mark.x > 0 && mark.x <= lim) {
+    points(mark.x, threshold, pch = 19, col = col.mark, cex = 1)
+    if (!is.null(mark.label)) {
+      text(mark.x, threshold, labels = mark.label,
+           pos = 4, cex = 0.7, col = col.mark)
+    }
+  }
+
   if (is.null(legend.title)) {
     legend.title <- expression(paste("Partial ", R^2, " of confounder(s) with the outcome"))
   }
@@ -1406,7 +1466,10 @@ ovb_extreme_plot.numeric = function(estimate,
       col = c(rep("black", length(r2yz.dx)),
               "red"),
       # bty = "n",
-      legend = paste0(r2yz.dx * 100, "%"),
+      # round the default labels: rescaled r2yz.dx values (e.g. the cluster
+      # ceiling scenarios) would otherwise print to full double precision
+      legend = if (!is.null(legend.labels)) legend.labels
+               else paste0(round(r2yz.dx * 100, 1), "%"),
       ncol = length(r2yz.dx) + 1,
       title = legend.title,
       cex = cex.legend

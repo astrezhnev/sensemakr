@@ -192,6 +192,186 @@ test_that("print and summary report the cluster block only when clustering is en
 })
 
 
+# A design whose covariates and benchmark are all cluster-constant, plus one
+# benchmark that varies within cluster. The weighted cluster-aggregated
+# regression is then the exact counterpart of the unit-level regression.
+make_benchmark_data <- function(seed = 11, G = 60) {
+  set.seed(seed)
+  Ng <- sample(3:10, G, replace = TRUE)
+  N  <- sum(Ng)
+  cl <- factor(rep(seq_len(G), Ng))
+  D  <- rbinom(G, 1, 0.5)[cl]
+  Wg <- rnorm(G)[cl]                       # cluster-constant benchmark
+  Xg <- rnorm(G)[cl]                       # cluster-constant covariate
+  Wu <- Wg + rnorm(N, sd = 1.2)            # benchmark varying within cluster
+  Y  <- 0.4 * D + 0.5 * Wg + 0.3 * Xg + rnorm(G, sd = 1)[cl] + rnorm(N, sd = 1.2)
+  data.frame(Y = Y, D = D, Wg = Wg, Xg = Xg, Wu = Wu, cl = cl)
+}
+
+
+test_that("bounds gain the cluster-scale outcome bound, matching the cluster regression", {
+  dat   <- make_benchmark_data()
+  model <- lm(Y ~ D + Wg + Xg, data = dat)
+  sens  <- sensemakr(model, treatment = "D", benchmark_covariates = "Wg",
+                     kd = 1:3, cluster = "cl")
+  eta2  <- sens$cluster$eta2
+
+  # exact conversion, not an approximation
+  expect_equal(sens$bounds$r2yz.dx_cluster, sens$bounds$r2yz.dx / eta2)
+  expect_true(all(sens$bounds$feasible))
+  # a cluster-constant benchmark has eta2_W == 1
+  expect_equal(sens$bounds$eta2_benchmark, rep(1, 3))
+
+  # and it equals the bound from the size-weighted cluster-aggregated regression
+  agg <- aggregate(cbind(Y, D, Wg, Xg) ~ cl, data = dat, FUN = mean)
+  agg$ng <- as.numeric(table(dat$cl))
+  cluster_bounds <- ovb_bounds(lm(Y ~ D + Wg + Xg, data = agg, weights = ng),
+                               treatment = "D", benchmark_covariates = "Wg", kd = 1:3)
+  expect_equal(sens$bounds$r2yz.dx_cluster, cluster_bounds$r2yz.dx)
+  # the treatment-side bound is level-invariant for a cluster-constant benchmark
+  expect_equal(sens$bounds$r2dz.x, cluster_bounds$r2dz.x)
+})
+
+
+test_that("an infeasible cluster-level bound is flagged and warned about", {
+  dat   <- make_benchmark_data()
+  model <- lm(Y ~ D + Wg + Xg, data = dat)
+  expect_warning(sens <- sensemakr(model, treatment = "D",
+                                   benchmark_covariates = "Wg",
+                                   kd = 8, cluster = "cl"),
+                 "r2yz.dx_cluster greater than 1")
+  expect_false(sens$bounds$feasible)
+  expect_true(sens$bounds$r2yz.dx_cluster > 1)
+})
+
+
+test_that("a benchmark covariate varying within cluster triggers a warning", {
+  dat   <- make_benchmark_data()
+  model <- lm(Y ~ D + Wu + Xg, data = dat)
+
+  expect_warning(sensemakr(model, treatment = "D", benchmark_covariates = "Wu",
+                           kd = 1, cluster = "cl"),
+                 "varies within clusters")
+
+  # a cluster-constant benchmark is silent
+  clean <- lm(Y ~ D + Wg + Xg, data = dat)
+  expect_silent(sensemakr(clean, treatment = "D", benchmark_covariates = "Wg",
+                          kd = 1, cluster = "cl"))
+})
+
+
+test_that("manual bounds and group benchmarks coexist with the cluster columns", {
+  dat   <- make_benchmark_data()
+  model <- lm(Y ~ D + Wg + Xg, data = dat)
+
+  # manual bound plus a benchmark: the rows must bind together
+  both <- sensemakr(model, treatment = "D", benchmark_covariates = "Wg", kd = 1,
+                    r2dz.x = 0.1, r2yz.dx = 0.1, cluster = "cl")
+  expect_equal(nrow(both$bounds), 2)
+  expect_true(is.na(both$bounds$eta2_benchmark[1]))   # manual bound
+  expect_equal(both$bounds$eta2_benchmark[2], 1)      # benchmark
+
+  # group benchmarks take the cluster columns too; eta2_benchmark is NA for groups
+  grouped <- sensemakr(model, treatment = "D",
+                       benchmark_covariates = list(grp = c("Wg", "Xg")),
+                       kd = 1, cluster = "cl")
+  expect_true("r2yz.dx_cluster" %in% names(grouped$bounds))
+  expect_true(is.na(grouped$bounds$eta2_benchmark))
+})
+
+
+test_that("bounds are untouched when no cluster is supplied", {
+  dat   <- make_benchmark_data()
+  model <- lm(Y ~ D + Wg + Xg, data = dat)
+  sens  <- sensemakr(model, treatment = "D", benchmark_covariates = "Wg", kd = 1)
+  expect_false("r2yz.dx_cluster" %in% names(sens$bounds))
+  expect_false("feasible" %in% names(sens$bounds))
+  expect_false("eta2_benchmark" %in% names(sens$bounds))
+})
+
+
+test_that("$cluster carries eta2, n_clusters, the column name and the cluster sizes", {
+  dat   <- make_benchmark_data()
+  sens  <- sensemakr(lm(Y ~ D + Wg + Xg, data = dat), treatment = "D", cluster = "cl")
+
+  expect_equal(sens$cluster$n_clusters, nlevels(dat$cl))
+  expect_equal(sens$cluster$cluster, "cl")
+  expect_equal(sum(sens$cluster$cluster_sizes), nrow(dat))
+  expect_equal(as.integer(sens$cluster$cluster_sizes), as.integer(table(dat$cl)))
+})
+
+
+test_that("a numeric cluster column works the same as a factor", {
+  dat <- make_benchmark_data()
+  dat$cl_num <- as.integer(dat$cl)   # e.g. an integer FIPS code
+
+  by_factor  <- sensemakr(lm(Y ~ D + Wg + Xg, data = dat), treatment = "D", cluster = "cl")
+  by_numeric <- sensemakr(lm(Y ~ D + Wg + Xg, data = dat), treatment = "D", cluster = "cl_num")
+
+  expect_equal(by_numeric$cluster$eta2, by_factor$cluster$eta2)
+  expect_equal(by_numeric$cluster$n_clusters, by_factor$cluster$n_clusters)
+  expect_equal(as.numeric(by_numeric$sensitivity_stats$rv_q_cluster),
+               as.numeric(by_factor$sensitivity_stats$rv_q_cluster))
+})
+
+
+test_that("ovb_minimal_reporting reports the cluster row only when clustering is on", {
+  dat   <- make_benchmark_data()
+  model <- lm(Y ~ D + Wg + Xg, data = dat)
+  clustered <- sensemakr(model, treatment = "D", benchmark_covariates = "Wg",
+                         kd = 1, cluster = "cl")
+  standard  <- sensemakr(model, treatment = "D", benchmark_covariates = "Wg", kd = 1)
+
+  for (fmt in c("latex", "html", "pure_html")) {
+    tab_c <- ovb_minimal_reporting(clustered, format = fmt, verbose = FALSE)
+    tab_s <- ovb_minimal_reporting(standard,  format = fmt, verbose = FALSE)
+    expect_true(grepl("Cluster-adjusted", tab_c, fixed = TRUE))
+    expect_true(grepl("60 clusters", tab_c, fixed = TRUE))
+    expect_false(grepl("Cluster", tab_s, fixed = TRUE))
+  }
+})
+
+
+test_that("extreme plot scales the outcome scenarios to the cluster ceiling", {
+  dat   <- make_benchmark_data()
+  sens  <- sensemakr(lm(Y ~ D + Wg + Xg, data = dat), treatment = "D", cluster = "cl")
+  eta2  <- sens$cluster$eta2
+  xrv   <- as.numeric(sens$sensitivity_stats$xrv_q_cluster)
+
+  path <- tempfile(fileext = ".png")
+  png(path); on.exit({dev.off(); unlink(path)}, add = TRUE)
+
+  # scaled: the returned scenarios are fractions of the ceiling
+  scaled <- ovb_extreme_plot(sens, r2yz.dx = c(1, 0.75, 0.5))
+  expect_equal(scaled[[1]]$r2yz.dx[1], eta2)
+
+  # unscaled: the old behaviour remains reachable
+  unscaled <- ovb_extreme_plot(sens, r2yz.dx = c(1, 0.75, 0.5), scale_to_ceiling = FALSE)
+  expect_equal(unscaled[[1]]$r2yz.dx[1], 1)
+
+  # the 100%-of-ceiling curve crosses the threshold exactly at the cluster XRV
+  at_xrv <- adjusted_estimate(estimate = sens$sensitivity_stats$estimate,
+                              se = sens$sensitivity_stats$se,
+                              dof = sens$sensitivity_stats$dof,
+                              r2dz.x = xrv, r2yz.dx = eta2)
+  expect_equal(at_xrv, 0)
+})
+
+
+test_that("extreme plot legend labels are rounded and overridable", {
+  path <- tempfile(fileext = ".png")
+  png(path); on.exit({dev.off(); unlink(path)}, add = TRUE)
+
+  # a non-round r2yz.dx must not produce a full-precision legend; the plot
+  # simply has to render, and custom labels must be accepted
+  expect_silent(ovb_extreme_plot(estimate = 0.1, se = 0.05, dof = 100,
+                                 r2dz.x = 0.1, r2yz.dx = c(0.318739766639781, 0.2)))
+  expect_silent(ovb_extreme_plot(estimate = 0.1, se = 0.05, dof = 100,
+                                 r2dz.x = 0.1, r2yz.dx = c(0.5, 0.25),
+                                 legend.labels = c("full ceiling", "half ceiling")))
+})
+
+
 test_that("cluster adjustment agrees between lm and fixest", {
   skip_if_not_installed("fixest")
   dat <- make_cluster_data()
@@ -207,4 +387,24 @@ test_that("cluster adjustment agrees between lm and fixest", {
                as.numeric(lm_sens$sensitivity_stats$rv_q_cluster))
   expect_equal(as.numeric(fe_sens$sensitivity_stats$xrv_q_cluster),
                as.numeric(lm_sens$sensitivity_stats$xrv_q_cluster))
+})
+
+
+test_that("cluster bounds and the benchmark guard work for fixest as for lm", {
+  skip_if_not_installed("fixest")
+  dat <- make_benchmark_data()
+
+  lm_sens <- sensemakr(lm(Y ~ D + Wg + Xg, data = dat), treatment = "D",
+                       benchmark_covariates = "Wg", kd = 1:2, cluster = "cl")
+  fe_sens <- sensemakr(fixest::feols(Y ~ D + Wg + Xg, data = dat), treatment = "D",
+                       benchmark_covariates = "Wg", kd = 1:2, cluster = "cl")
+
+  expect_equal(fe_sens$bounds$r2yz.dx_cluster, lm_sens$bounds$r2yz.dx_cluster)
+  expect_equal(fe_sens$bounds$eta2_benchmark, lm_sens$bounds$eta2_benchmark)
+
+  # the within-cluster benchmark guard fires for fixest too
+  expect_warning(sensemakr(fixest::feols(Y ~ D + Wu + Xg, data = dat),
+                           treatment = "D", benchmark_covariates = "Wu",
+                           kd = 1, cluster = "cl"),
+                 "varies within clusters")
 })

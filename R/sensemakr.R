@@ -177,12 +177,13 @@ sensemakr <- function(...){
 #' @param bound_label label to bounds provided manually in \code{r2dz.x} and \code{r2yz.dx}.
 #' @param cluster optional character string naming a column (in the model frame or
 #' the model's data) that identifies the cluster in which treatment is assigned, for
-#' the clustered-treatment-assignment setting. The variable should be a character or
-#' factor. When supplied, treatment must be constant within each cluster, and the
-#' reported robustness value and extreme robustness value are corrected by Pearson's
-#' partial correlation ratio \eqn{\eta^2_{Y \mid D, X}} so that they match the
-#' cluster-aggregated regression (see Strezhnev 2026). Default is \code{NULL}
-#' (standard, unadjusted sensitivity analysis).
+#' the clustered-treatment-assignment setting. The column may be a factor, character,
+#' or numeric identifier; it is coerced to a factor. When supplied, treatment must be
+#' constant within each cluster, and the reported robustness value and extreme
+#' robustness value are corrected by Pearson's partial correlation ratio
+#' \eqn{\eta^2_{Y \mid D, X}} so that they match the cluster-aggregated regression
+#' (see Strezhnev 2026). Benchmark covariates must also be cluster-constant; a warning
+#' is issued otherwise. Default is \code{NULL} (standard, unadjusted analysis).
 #' @inheritParams robustness_value
 #' @rdname sensemakr
 #' @importFrom stats formula
@@ -213,7 +214,10 @@ sensemakr.lm <- function(model,
     cluster_vec <- .get_cluster(model, cluster)
     .check_cluster_treatment(model, treatment, cluster_vec)
     eta2 <- .compute_eta2(model, cluster_vec)
-    out$cluster <- list(eta2 = eta2)
+    out$cluster <- list(eta2 = eta2,
+                        n_clusters = length(unique(cluster_vec)),
+                        cluster = cluster,
+                        cluster_sizes = table(cluster_vec))
   }
 
   # senstivity statistics
@@ -259,11 +263,17 @@ sensemakr.lm <- function(model,
     se_multiple <- qt(alpha/2, df = model$df.residual, lower.tail = F)
     out$bounds$adjusted_lower_CI <- out$bounds$adjusted_estimate - se_multiple*out$bounds$adjusted_se
     out$bounds$adjusted_upper_CI <- out$bounds$adjusted_estimate + se_multiple*out$bounds$adjusted_se
+    # manual bounds have no benchmark covariate to take eta2_W from
+    if (!is.null(cluster)) out$bounds$eta2_benchmark <- NA_real_
   } else{
     out$bounds <-  NULL
   }
 
   if (!is.null(benchmark_covariates)) {
+    # a benchmark for a cluster-level confounder must itself be cluster-constant
+    if (!is.null(cluster)) {
+      eta2_w <- .check_cluster_benchmarks(model, benchmark_covariates, cluster_vec)
+    }
     bench_bounds <- ovb_bounds.lm(model = model,
                                   treatment = treatment,
                                   benchmark_covariates = benchmark_covariates,
@@ -273,8 +283,15 @@ sensemakr.lm <- function(model,
                                   alpha = alpha,
                                   h0 = h0,
                                   reduce = reduce)
+    if (!is.null(cluster)) {
+      bench_bounds$eta2_benchmark <-
+        unname(eta2_w[.bound_label_benchmark(bench_bounds$bound_label)])
+    }
     out$bounds <- rbind(out$bounds, bench_bounds)
   }
+
+  # put the outcome-side bounds on the cluster scale
+  out$bounds <- .add_cluster_bounds(out$bounds, eta2)
 
   class(out) <- "sensemakr"
 
@@ -327,7 +344,10 @@ sensemakr.fixest <- function(model,
     cluster_vec <- .get_cluster(model, cluster)
     .check_cluster_treatment(model, treatment, cluster_vec)
     eta2 <- .compute_eta2(model, cluster_vec)
-    out$cluster <- list(eta2 = eta2)
+    out$cluster <- list(eta2 = eta2,
+                        n_clusters = length(unique(cluster_vec)),
+                        cluster = cluster,
+                        cluster_sizes = table(cluster_vec))
   }
 
   # senstivity statistics
@@ -374,11 +394,17 @@ sensemakr.fixest <- function(model,
     se_multiple <- qt(alpha/2, df = fixest::degrees_freedom(model, type = "resid", vcov = "iid"), lower.tail = F)
     out$bounds$adjusted_lower_CI <- out$bounds$adjusted_estimate - se_multiple*out$bounds$adjusted_se
     out$bounds$adjusted_upper_CI <- out$bounds$adjusted_estimate + se_multiple*out$bounds$adjusted_se
+    # manual bounds have no benchmark covariate to take eta2_W from
+    if (!is.null(cluster)) out$bounds$eta2_benchmark <- NA_real_
   } else{
     out$bounds <-  NULL
   }
 
   if (!is.null(benchmark_covariates)) {
+    # a benchmark for a cluster-level confounder must itself be cluster-constant
+    if (!is.null(cluster)) {
+      eta2_w <- .check_cluster_benchmarks(model, benchmark_covariates, cluster_vec)
+    }
     bench_bounds <- ovb_bounds.fixest(model = model,
                                   treatment = treatment,
                                   benchmark_covariates = benchmark_covariates,
@@ -389,8 +415,15 @@ sensemakr.fixest <- function(model,
                                   h0 = h0,
                                   reduce = reduce,
                                   message = F)
+    if (!is.null(cluster)) {
+      bench_bounds$eta2_benchmark <-
+        unname(eta2_w[.bound_label_benchmark(bench_bounds$bound_label)])
+    }
     out$bounds <- rbind(out$bounds, bench_bounds)
   }
+
+  # put the outcome-side bounds on the cluster scale
+  out$bounds <- .add_cluster_bounds(out$bounds, eta2)
 
   class(out) <- "sensemakr"
 
