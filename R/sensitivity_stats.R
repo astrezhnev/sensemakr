@@ -979,7 +979,12 @@ error_if_no_dof.fixest = function(model, ...) {
 
 
 message_vcov.fixest <- function(model){
-  vcov_type <- attr(summary(model)$coeftable, which = "type")
+  coeftable <- summary(model)$coeftable
+  # fixest renamed this attribute from "type" to "vcov_type"
+  vcov_type <- attr(coeftable, which = "type")
+  if(is.null(vcov_type)){
+    vcov_type <- attr(coeftable, which = "vcov_type")
+  }
   if(!is.null(vcov_type)){
     if(vcov_type != "IID"){
       message("Note for fixest: using 'iid' standard errors. Support for robust standard errors coming soon.")
