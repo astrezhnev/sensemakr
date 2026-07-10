@@ -86,11 +86,94 @@
 }
 
 
-# Internal: eta^2_{Y | D, X}, the partial correlation ratio of the outcome.
-# Equal to the R^2 of the restricted-regression residuals regressed on the
-# cluster indicators (respecting model weights, if any).
+# Internal: warn when the model constrains a covariate's within-cluster and
+# between-cluster slopes to be equal. A covariate is fine if it is constant within
+# clusters, or if its cluster mean lies in the column span of the design (so the
+# two slopes are free to differ). Only a covariate that varies within clusters
+# *and* whose cluster mean is absent from the model triggers the restriction.
+#
+# The warning deliberately avoids the phrase "varies within clusters" used by
+# .check_cluster_benchmarks(), so that callers muffling one do not swallow the other.
+.check_cluster_model <- function(model, cluster_vec, tol = 1e-10) {
+  mm  <- stats::model.matrix(model)
+  nms <- setdiff(colnames(mm), "(Intercept)")
+  if (!length(nms)) return(invisible(TRUE))
+  qrX <- qr(mm)
+
+  bad <- Filter(function(nm) {
+    v      <- mm[, nm]
+    ss_tot <- sum((v - mean(v))^2)
+    ss_w   <- sum((v - stats::ave(v, cluster_vec))^2)
+    if (ss_tot <= 0 || ss_w <= tol * ss_tot) return(FALSE)  # cluster-constant: fine
+    m      <- stats::ave(v, cluster_vec)                    # its cluster mean
+    ss_m   <- sum((m - mean(m))^2)
+    # A covariate with no between-cluster component (e.g. a within-cluster
+    # deviation regressor) constrains nothing: its cluster mean is the zero
+    # vector, trivially spanned. Compare ss_m against the covariate's own scale,
+    # not against zero, or floating-point noise in a numerically-zero cluster
+    # mean gets compared against noise in its own projection.
+    if (ss_m <= tol * ss_tot) return(FALSE)
+    sum(qr.resid(qrX, m)^2) > tol * ss_m                    # mean not spanned
+  }, nms)
+
+  if (length(bad)) {
+    warning("Covariate(s) ", paste0("'", bad, "'", collapse = ", "),
+            " constrain their between-cluster and within-cluster slopes to be ",
+            "equal: each one differs across units inside a cluster, while its ",
+            "cluster mean is absent from the model. The treatment coefficient ",
+            "therefore differs from the unrestricted estimate, and r2yz.dx is no ",
+            "longer just the share of between-cluster outcome variance a ",
+            "cluster-level confounder explains: it also includes the confounder's ",
+            "influence on the fitted coefficient of these covariates. Add their ",
+            "cluster means to the model.",
+            call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+
+# Internal: eta^2_{Y | D, X}, the largest outcome-side partial R^2 that a
+# cluster-level confounder can attain given the model's regressors. This is the
+# partial R^2 of the outcome with the cluster indicators:
+#
+#     eta2 = 1 - SSR(regressors + cluster dummies) / SSR(regressors)
+#
+# By Frisch-Waugh-Lovell the numerator is the SSR of the within-cluster demeaned
+# regression, so the G cluster dummies are never formed.
+#
+# This coincides with the between-cluster share of the residual variance --
+# .eta2_of(residuals(model), cluster_vec) -- exactly when every fitted value is
+# constant within clusters. It does not when a covariate varies within clusters
+# and its cluster mean is absent from the model: that specification ties the
+# covariate's within- and between-cluster slopes together, letting a cluster-level
+# confounder reduce within-cluster residual variance by shifting the constrained
+# coefficient. The between-cluster share then falls below the true ceiling, which
+# would make the cluster-adjusted robustness values anti-conservative. See
+# .check_cluster_model(), which warns on exactly that specification.
 .compute_eta2 <- function(model, cluster_vec) {
-  .eta2_of(stats::residuals(model), cluster_vec, stats::weights(model))
+  # model.frame() is empty for fixest, so recover the response this way
+  y  <- stats::fitted(model) + stats::residuals(model)
+  mm <- stats::model.matrix(model)
+  w  <- stats::weights(model)
+  if (is.null(w)) w <- rep(1, length(y))
+  sw <- sqrt(w)
+
+  # weighted within-cluster demeaning
+  wsum <- rowsum(w, cluster_vec)
+  idx  <- match(as.character(cluster_vec), rownames(wsum))
+  dm   <- function(v) v - (rowsum(w * v, cluster_vec) / wsum)[idx]
+
+  yt <- dm(y)
+  Xt <- apply(mm, 2, dm)
+  # regressors constant within clusters demean to zero (the intercept among them)
+  keep <- colSums((sw * Xt)^2) > 1e-10 * pmax(colSums((sw * mm)^2), 1)
+
+  ssr_full <- if (any(keep)) {
+    sum(qr.resid(qr(sw * Xt[, keep, drop = FALSE]), sw * yt)^2)
+  } else {
+    sum(w * yt^2)                     # all regressors cluster-constant
+  }
+  1 - ssr_full / sum(w * stats::residuals(model)^2)
 }
 
 
@@ -105,8 +188,10 @@
 #' Between-cluster share of the variance of benchmark covariates
 #'
 #' @description
-#' Computes \eqn{\eta^2_{W \mid X}} for each benchmark covariate: the share of
-#' its variance that lies between clusters. A benchmark for a cluster-level
+#' Computes, for each benchmark covariate, the share of its variance that lies
+#' between clusters. This is an \emph{unconditional} quantity: the covariate is not
+#' residualized on the other regressors, so it is not \eqn{\eta^2_{W \mid X}}.
+#' It equals 1 for a cluster-level benchmark. A benchmark for a cluster-level
 #' confounder must itself be cluster-constant (\eqn{\eta^2_W = 1}). When it is
 #' not, its within-cluster component is orthogonal to a cluster-assigned
 #' treatment: it inflates the outcome-side bound while contributing nothing to
@@ -122,7 +207,8 @@
 #'   vectors for group benchmarks.
 #' @param cluster_vec the cluster variable, aligned with the model's rows.
 #' @param tol tolerance on the between-cluster share. Default \code{1e-8}.
-#' @return A named numeric vector of \eqn{\eta^2_W}, one per benchmark covariate.
+#' @return A named numeric vector giving the between-cluster share of each benchmark
+#'   covariate's variance.
 #' @keywords internal
 #' @noRd
 .check_cluster_benchmarks <- function(model, benchmark_covariates, cluster_vec,
@@ -139,7 +225,8 @@
   for (nm in names(eta2_w)) {
     if (!is.na(eta2_w[nm]) && eta2_w[nm] < 1 - tol) {
       warning("Benchmark covariate '", nm, "' varies within clusters ",
-              "(eta^2_{W|X} = ", formatC(eta2_w[nm], digits = 2, format = "f"), "). ",
+              "(between-cluster share of its variance = ",
+              formatC(eta2_w[nm], digits = 2, format = "f"), "). ",
               "Only its cluster mean can serve as a benchmark for a cluster-level ",
               "confounder; the within-cluster component is orthogonal to treatment ",
               "and inflates the outcome-side bound. Consider entering the covariate ",

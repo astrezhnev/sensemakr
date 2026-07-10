@@ -119,8 +119,18 @@ or numeric identifier; it is coerced to a factor. When supplied, treatment must 
 constant within each cluster, and the reported robustness value and extreme
 robustness value are corrected by Pearson's partial correlation ratio
 \eqn{\eta^2_{Y \mid D, X}} so that they match the cluster-aggregated regression
-(see Strezhnev 2026). Benchmark covariates must also be cluster-constant; a warning
-is issued otherwise. Default is \code{NULL} (standard, unadjusted analysis).}
+(see Strezhnev 2026). Here \eqn{\eta^2} is the largest outcome-side partial
+\eqn{R^2} that a cluster-level confounder can attain given the model's regressors.
+Benchmark covariates must also be cluster-constant; a warning is issued otherwise.
+
+A covariate that varies within clusters and whose cluster mean is absent from the
+model constrains that covariate's within-cluster and between-cluster slopes to be
+equal; \code{sensemakr} warns in that case. The cluster-adjusted statistics remain
+well defined, but the outcome-side sensitivity parameter changes meaning: at the
+ceiling it says the confounder explains all of the between-cluster residual
+variation \emph{plus} whatever within-cluster fit it obtains by shifting the
+constrained coefficient. Adding the covariate's cluster mean to the model removes
+the restriction. Default is \code{NULL} (standard, unadjusted analysis).}
 
 \item{formula}{an object of the class \code{\link{formula}}: a symbolic description of the model to be fitted.}
 

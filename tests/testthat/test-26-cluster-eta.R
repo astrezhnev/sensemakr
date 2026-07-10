@@ -24,6 +24,9 @@ aggregate_clusters <- function(dat) {
 
 
 test_that("eta2 equals the R2 of the restricted residuals on cluster indicators", {
+  # This identity holds when every fitted value is constant within clusters, which
+  # is the case here: D and X are both cluster-level. See the tests below for the
+  # restricted specification, where eta2 exceeds the between-cluster share.
   dat <- make_cluster_data()
   model <- lm(Y ~ D + X, data = dat)
   sens  <- sensemakr(model, treatment = "D", cluster = "cl")
@@ -38,6 +41,139 @@ test_that("eta2 equals the R2 of the restricted residuals on cluster indicators"
   expect_equal(sens$sensitivity_stats$eta2, eta2_auxiliary)
   expect_true(sens$sensitivity_stats$eta2 > 0 && sens$sensitivity_stats$eta2 < 1)
 })
+
+
+# A Mundlak-style design: an individual-level covariate w, its cluster mean and its
+# within-cluster deviation. `y ~ d + w` is the restricted specification that ties
+# w's within- and between-cluster slopes together.
+make_mundlak_data <- function(seed = 3, G = 120) {
+  set.seed(seed)
+  Ng <- sample(2:6, G, replace = TRUE)
+  N  <- sum(Ng)
+  g  <- factor(rep(seq_len(G), Ng))
+  d  <- rbinom(G, 1, 0.5)[g]
+  w  <- rnorm(N) + rnorm(G)[g]
+  w_mean <- ave(w, g)
+  w_dev  <- w - w_mean
+  y  <- 0.4 * d + 0.6 * w_mean + 0.2 * w_dev + rnorm(G, sd = 1)[g] + rnorm(N, sd = 1)
+  data.frame(y = y, d = d, w = w, w_mean = w_mean, w_dev = w_dev, g = g,
+             wt = runif(N, 0.5, 2))
+}
+
+# brute force: 1 - SSR(regressors + cluster dummies) / SSR(regressors)
+brute_eta2 <- function(model, g) {
+  X <- model.matrix(model)
+  w <- weights(model)
+  if (is.null(w)) w <- rep(1, nrow(X))
+  y <- fitted(model) + residuals(model)
+  full <- lm(y ~ X + factor(g) + 0, weights = w)
+  1 - sum(w * residuals(full)^2) / sum(w * residuals(model)^2)
+}
+
+
+test_that("eta2 equals the brute-force partial R2 with the cluster dummies", {
+  dat <- make_mundlak_data()
+  forms <- list(y ~ d + w_mean, y ~ d + w_mean + w_dev, y ~ d + w + w_mean, y ~ d + w)
+
+  for (f in forms) {
+    m <- lm(f, data = dat)
+    expect_equal(.compute_eta2(m, dat$g), brute_eta2(m, dat$g))
+    mw <- lm(f, data = dat, weights = wt)
+    expect_equal(.compute_eta2(mw, dat$g), brute_eta2(mw, dat$g))
+  }
+})
+
+
+test_that("eta2 exceeds the between-cluster share only for the restricted model", {
+  dat <- make_mundlak_data()
+  between_share <- function(m) .eta2_of(residuals(m), dat$g, weights(m))
+
+  # every fitted value constant within clusters, or the cluster mean is in the model
+  for (f in list(y ~ d + w_mean, y ~ d + w_mean + w_dev, y ~ d + w + w_mean)) {
+    m <- lm(f, data = dat)
+    expect_equal(.compute_eta2(m, dat$g), between_share(m))
+  }
+
+  # the restricted model: the between-cluster share is strictly below the ceiling,
+  # so the old estimator was anti-conservative (1/eta too large -> RV too high)
+  m_restricted <- lm(y ~ d + w, data = dat)
+  expect_true(.compute_eta2(m_restricted, dat$g) > between_share(m_restricted))
+})
+
+
+test_that("eta2 is 1 for singleton clusters and is the between-share when all regressors are cluster-constant", {
+  dat <- make_mundlak_data()
+
+  singleton <- factor(seq_len(nrow(dat)))
+  expect_equal(.compute_eta2(lm(y ~ d + w, data = dat), singleton), 1)
+
+  # all regressors cluster-constant: hits the !any(keep) branch
+  m <- lm(y ~ d + w_mean, data = dat)
+  expect_equal(.compute_eta2(m, dat$g), .eta2_of(residuals(m), dat$g))
+})
+
+
+test_that("the model guard warns only on the restricted specification", {
+  dat <- make_mundlak_data()
+
+  # a covariate is fine if it is cluster-constant, or if its cluster mean is spanned
+  expect_silent(.check_cluster_model(lm(y ~ d + w_mean, data = dat), dat$g))
+  expect_silent(.check_cluster_model(lm(y ~ d + w_mean + w_dev, data = dat), dat$g))
+  expect_silent(.check_cluster_model(lm(y ~ d + w + w_mean, data = dat), dat$g))
+
+  expect_warning(.check_cluster_model(lm(y ~ d + w, data = dat), dat$g), "'w'")
+  expect_warning(.check_cluster_model(lm(y ~ d + w, data = dat), dat$g), "constrain")
+})
+
+
+test_that("a within-cluster deviation regressor never spuriously trips the guard", {
+  # w_dev's cluster mean is numerically zero; comparing that noise against the noise
+  # in its own projection must not fire the warning, weighted or unweighted.
+  for (s in 1:5) {
+    dat <- make_mundlak_data(seed = s, G = 60)
+    expect_silent(.check_cluster_model(lm(y ~ d + w_mean + w_dev, data = dat), dat$g))
+    expect_silent(.check_cluster_model(lm(y ~ d + w_mean + w_dev, data = dat, weights = wt), dat$g))
+  }
+})
+
+
+test_that("the model guard and the benchmark guard raise distinguishable warnings", {
+  dat <- make_mundlak_data()
+  warnings_raised <- character(0)
+  withCallingHandlers(
+    sensemakr(lm(y ~ d + w, data = dat), treatment = "d",
+              benchmark_covariates = "w", cluster = "g"),
+    warning = function(w) {
+      warnings_raised <<- c(warnings_raised, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
+
+  expect_equal(length(warnings_raised), 2)
+  model_warning     <- warnings_raised[grepl("constrain", warnings_raised)]
+  benchmark_warning <- warnings_raised[grepl("varies within clusters", warnings_raised)]
+  expect_equal(length(model_warning), 1)
+  expect_equal(length(benchmark_warning), 1)
+  # muffling one by matching its text must not swallow the other
+  expect_false(grepl("varies within clusters", model_warning))
+  expect_false(grepl("constrain", benchmark_warning))
+  # the benchmark warning reports the unconditional between-cluster share
+  expect_true(grepl("between-cluster share of its variance", benchmark_warning))
+})
+
+
+test_that("adding w_dev to a compliant model changes neither tau nor the cluster RV", {
+  dat <- make_mundlak_data()
+  base <- sensemakr(lm(y ~ d + w_mean, data = dat), treatment = "d", cluster = "g")
+  plus <- sensemakr(lm(y ~ d + w_mean + w_dev, data = dat), treatment = "d", cluster = "g")
+
+  expect_equal(unname(coef(lm(y ~ d + w_mean, data = dat))["d"]),
+               unname(coef(lm(y ~ d + w_mean + w_dev, data = dat))["d"]))
+  # w_dev is orthogonal to the cluster-level regressors, so tau is untouched; it does
+  # shrink the residual variance, so eta2 and hence the cluster RV do move
+  expect_equal(base$sensitivity_stats$estimate, plus$sensitivity_stats$estimate)
+})
+
+
 
 
 test_that("cluster-adjusted RV and XRV match the weighted cluster-aggregated regression", {
@@ -207,6 +343,22 @@ make_benchmark_data <- function(seed = 11, G = 60) {
   Y  <- 0.4 * D + 0.5 * Wg + 0.3 * Xg + rnorm(G, sd = 1)[cl] + rnorm(N, sd = 1.2)
   data.frame(Y = Y, D = D, Wg = Wg, Xg = Xg, Wu = Wu, cl = cl)
 }
+
+
+test_that("eta2_benchmark is the unconditional between-cluster share, and is 1 for a cluster-level benchmark", {
+  dat <- make_benchmark_data()
+
+  # a cluster-constant benchmark has a between-cluster share of exactly 1
+  sens <- sensemakr(lm(Y ~ D + Wg + Xg, data = dat), treatment = "D",
+                    benchmark_covariates = "Wg", kd = 1, cluster = "cl")
+  expect_equal(sens$bounds$eta2_benchmark, 1)
+
+  # it is the unconditional share: the covariate is not residualized on the other
+  # regressors, so it is not the conditional eta^2_{W|X}
+  model <- lm(Y ~ D + Wu + Xg, data = dat)
+  unconditional <- suppressWarnings(.check_cluster_benchmarks(model, "Wu", dat$cl))
+  expect_equal(unname(unconditional), summary(lm(Wu ~ factor(cl), data = dat))$r.squared)
+})
 
 
 test_that("bounds gain the cluster-scale outcome bound, matching the cluster regression", {

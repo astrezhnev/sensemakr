@@ -165,8 +165,14 @@ summary.sensemakr <- function(object, digits = max(3L, getOption("digits") - 3L)
     cat("-- Treatment is assigned at the level of", paste0("'", x$info$cluster, "',"),
         "so an unobserved confounder must also be a cluster-level variable, and can only explain variation in the outcome that lies between clusters, not within them.",
         "The partial eta2 of the outcome with the cluster is", paste0(100*eta2, "%,"),
-        "meaning that only", paste0(100*eta2, "%"), "of the residual variance of the outcome is available for such a confounder to explain.",
+        "the largest partial R2 with the outcome that such a confounder can attain given the model's regressors.",
         "The unadjusted statistics above compare the treatment and outcome partial R2 on different scales, and are therefore too conservative.")
+    cat("\n\n")
+    cat("-- Note on the specification: if a covariate that varies within clusters is entered without its cluster mean,",
+        "the model ties that covariate's within-cluster and between-cluster slopes together.",
+        "Part of the eta2 ceiling then reflects the confounder shifting that constrained coefficient,",
+        "rather than explaining between-cluster variation in the outcome. sensemakr warns when this is the case;",
+        "adding the covariate's cluster mean to the model removes the restriction.")
     cat("\n\n")
     cat("-- Cluster-adjusted Robustness Value,", "q =", paste0(q, ":"),
         "cluster-level unobserved confounders that explain more than", paste0(100*rv_qc, "%"),
