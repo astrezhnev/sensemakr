@@ -86,11 +86,27 @@
 }
 
 
+# Internal: cluster means of `v`, weighted by `w` when the model carries weights.
+.cluster_mean <- function(v, cluster_vec, w = NULL) {
+  if (is.null(w)) return(stats::ave(v, cluster_vec))
+  wsum <- rowsum(w, cluster_vec)
+  idx  <- match(as.character(cluster_vec), rownames(wsum))
+  (rowsum(w * v, cluster_vec) / wsum)[idx]
+}
+
+
 # Internal: warn when the model constrains a covariate's within-cluster and
 # between-cluster slopes to be equal. A covariate is fine if it is constant within
 # clusters, or if its cluster mean lies in the column span of the design (so the
 # two slopes are free to differ). Only a covariate that varies within clusters
 # *and* whose cluster mean is absent from the model triggers the restriction.
+#
+# The cluster mean is the *weighted* one when the model has weights: a weighted fit
+# orthogonalizes against the weighted cluster space, so it is the weighted
+# decomposition whose slopes are free to differ. Using the unweighted mean here
+# would warn on a correctly weighted Mundlak specification and stay silent on an
+# incorrectly weighted one. This matches the condition under which .compute_eta2()
+# departs from the between-cluster share of the residual variance.
 #
 # The warning deliberately avoids the phrase "varies within clusters" used by
 # .check_cluster_benchmarks(), so that callers muffling one do not swallow the other.
@@ -99,13 +115,14 @@
   nms <- setdiff(colnames(mm), "(Intercept)")
   if (!length(nms)) return(invisible(TRUE))
   qrX <- qr(mm)
+  w   <- stats::weights(model)
 
   bad <- Filter(function(nm) {
     v      <- mm[, nm]
     ss_tot <- sum((v - mean(v))^2)
-    ss_w   <- sum((v - stats::ave(v, cluster_vec))^2)
+    m      <- .cluster_mean(v, cluster_vec, w)              # its cluster mean
+    ss_w   <- sum((v - m)^2)
     if (ss_tot <= 0 || ss_w <= tol * ss_tot) return(FALSE)  # cluster-constant: fine
-    m      <- stats::ave(v, cluster_vec)                    # its cluster mean
     ss_m   <- sum((m - mean(m))^2)
     # A covariate with no between-cluster component (e.g. a within-cluster
     # deviation regressor) constrains nothing: its cluster mean is the zero
@@ -159,9 +176,7 @@
   sw <- sqrt(w)
 
   # weighted within-cluster demeaning
-  wsum <- rowsum(w, cluster_vec)
-  idx  <- match(as.character(cluster_vec), rownames(wsum))
-  dm   <- function(v) v - (rowsum(w * v, cluster_vec) / wsum)[idx]
+  dm <- function(v) v - .cluster_mean(v, cluster_vec, w)
 
   yt <- dm(y)
   Xt <- apply(mm, 2, dm)

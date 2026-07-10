@@ -128,11 +128,75 @@ test_that("the model guard warns only on the restricted specification", {
 
 test_that("a within-cluster deviation regressor never spuriously trips the guard", {
   # w_dev's cluster mean is numerically zero; comparing that noise against the noise
-  # in its own projection must not fire the warning, weighted or unweighted.
+  # in its own projection must not fire the warning. Under weights the relevant
+  # decomposition uses weighted cluster means, so build it that way.
   for (s in 1:5) {
     dat <- make_mundlak_data(seed = s, G = 60)
     expect_silent(.check_cluster_model(lm(y ~ d + w_mean + w_dev, data = dat), dat$g))
-    expect_silent(.check_cluster_model(lm(y ~ d + w_mean + w_dev, data = dat, weights = wt), dat$g))
+
+    wsum <- rowsum(dat$wt, dat$g)
+    idx  <- match(as.character(dat$g), rownames(wsum))
+    dat$w_mean_wt <- (rowsum(dat$wt * dat$w, dat$g) / wsum)[idx]
+    dat$w_dev_wt  <- dat$w - dat$w_mean_wt
+    expect_silent(.check_cluster_model(
+      lm(y ~ d + w_mean_wt + w_dev_wt, data = dat, weights = wt), dat$g))
+  }
+})
+
+
+test_that("with user weights, the guard follows the weighted cluster mean", {
+  # `weights` here are user-supplied weights on the unit-level regression (e.g.
+  # survey weights), not cluster-size weights. A weighted fit orthogonalizes
+  # against the weighted cluster space, so it is the weighted Mundlak
+  # decomposition whose within- and between-cluster slopes are free to differ.
+  dat <- make_mundlak_data()
+  wsum <- rowsum(dat$wt, dat$g)
+  idx  <- match(as.character(dat$g), rownames(wsum))
+  dat$w_mean_wt <- (rowsum(dat$wt * dat$w, dat$g) / wsum)[idx]
+  dat$w_dev_wt  <- dat$w - dat$w_mean_wt
+
+  # correctly weighted Mundlak means: unrestricted, so silent
+  expect_silent(.check_cluster_model(
+    lm(y ~ d + w_mean_wt + w_dev_wt, data = dat, weights = wt), dat$g))
+  expect_silent(.check_cluster_model(
+    lm(y ~ d + w + w_mean_wt, data = dat, weights = wt), dat$g))
+
+  # unweighted means inside a weighted fit do NOT free the weighted decomposition
+  expect_warning(.check_cluster_model(
+    lm(y ~ d + w_mean + w_dev, data = dat, weights = wt), dat$g), "constrain")
+})
+
+
+test_that("the guard warns exactly when eta2 departs from the between-cluster share", {
+  dat <- make_mundlak_data()
+  wsum <- rowsum(dat$wt, dat$g)
+  idx  <- match(as.character(dat$g), rownames(wsum))
+  dat$w_mean_wt <- (rowsum(dat$wt * dat$w, dat$g) / wsum)[idx]
+  dat$w_dev_wt  <- dat$w - dat$w_mean_wt
+
+  models <- list(
+    lm(y ~ d + w_mean, data = dat),
+    lm(y ~ d + w_mean + w_dev, data = dat),
+    lm(y ~ d + w + w_mean, data = dat),
+    lm(y ~ d + w, data = dat),
+    lm(y ~ d + w_mean_wt + w_dev_wt, data = dat, weights = wt),
+    lm(y ~ d + w_mean + w_dev, data = dat, weights = wt),
+    lm(y ~ d + w, data = dat, weights = wt)
+  )
+
+  for (m in models) {
+    between <- .eta2_of(residuals(m), dat$g, weights(m))
+    ceiling <- .compute_eta2(m, dat$g)
+    restricted <- !isTRUE(all.equal(between, ceiling, tolerance = 1e-9))
+
+    warned <- FALSE
+    withCallingHandlers(.check_cluster_model(m, dat$g),
+                        warning = function(w) {
+                          warned <<- TRUE; invokeRestart("muffleWarning")
+                        })
+    expect_equal(warned, restricted)
+    # the ceiling is never below the between-cluster share
+    expect_true(ceiling >= between - 1e-12)
   }
 })
 
