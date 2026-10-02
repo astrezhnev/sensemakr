@@ -299,6 +299,9 @@ sensemakr.lm <- function(model,
         unname(eta2_w[.bound_label_benchmark(bench_bounds$bound_label)])
     }
     out$bounds <- rbind(out$bounds, bench_bounds)
+    # rbind takes its class from the first argument, and a manual bound is a
+    # plain data.frame, so the ovb_bounds class has to be restored here
+    class(out$bounds) <- c("ovb_bounds", "data.frame")
   }
 
   # put the outcome-side bounds on the cluster scale
@@ -432,6 +435,9 @@ sensemakr.fixest <- function(model,
         unname(eta2_w[.bound_label_benchmark(bench_bounds$bound_label)])
     }
     out$bounds <- rbind(out$bounds, bench_bounds)
+    # rbind takes its class from the first argument, and a manual bound is a
+    # plain data.frame, so the ovb_bounds class has to be restored here
+    class(out$bounds) <- c("ovb_bounds", "data.frame")
   }
 
   # put the outcome-side bounds on the cluster scale
@@ -475,10 +481,9 @@ sensemakr.formula <- function(formula,
   type <- match.arg(method, method)
 
   if(type == "lm") {
-    reg.call <- call(type, formula = substitute(formula), data = substitute(data))
-    outcome_model <- eval(reg.call)
+    outcome_model <- lm(formula, data)
   } else if(type == "feols") {
-    if (!requireNamespace("fixest")) {
+    if (!requireNamespace("fixest", quietly = TRUE)) {
       stop("Please install the fixest package.")
     }
     outcome_model <- fixest::feols(fml = formula, data = data, vcov = vcov)
@@ -610,6 +615,9 @@ sensemakr.numeric <- function(estimate,
     bench_bounds$adjusted_upper_CI <- bench_bounds$adjusted_estimate + se_multiple*bench_bounds$adjusted_se
 
     out$bounds <- rbind(out$bounds, bench_bounds)
+    # rbind takes its class from the first argument, and a manual bound is a
+    # plain data.frame, so the ovb_bounds class has to be restored here
+    class(out$bounds) <- c("ovb_bounds", "data.frame")
   }
 
   class(out) <- "sensemakr"
